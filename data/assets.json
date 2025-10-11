@@ -1,0 +1,10 @@
+[
+  {
+    "symbol": "BTC/USDT",
+    "name": "Bitcoin"
+  },
+  {
+    "symbol": "ETH/USDT",
+    "name": "Ethereum"
+  }
+]
