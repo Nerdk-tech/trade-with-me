@@ -172,7 +172,7 @@ async def import_wallet_flow_handler(update, context):
         name = context.user_data.pop('import_wallet_name', 'Wallet')
         users[uid].setdefault('wallets', []).append({"name":name,"address":addr,"imported_at":int(time.time())})
         save_json("users.json", users); context.user_data.pop('import_wallet_flow', None)
-        await update.message.reply_text(f"✅ Wallet "{name}" imported (public address saved).")
+        await update.message.reply_text(f"✅ Wallet \"{name}\" imported (public address saved).")
         return
 
 def main():
