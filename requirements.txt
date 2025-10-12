@@ -9,4 +9,3 @@ pillow==11.3.0
 typing-extensions==4.15.0
 cryptography==46.0.2
 setuptools==80.9.0
-imghdr3==0.1.0
