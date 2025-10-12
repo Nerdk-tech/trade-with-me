@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-try:
-    import imghdr
-except ModuleNotFoundError:
-    import imghdr3 as imghdr
+import types, sys
+# Fix for Python 3.13 removing imghdr
+if "imghdr" not in sys.modules:
+    sys.modules["imghdr"] = types.SimpleNamespace(what=lambda *a, **kw: None)
+
 import os, json, time, re, traceback
 from threading import Thread
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
-
 # optional libs
 try:
     import ccxt
