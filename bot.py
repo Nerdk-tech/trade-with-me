@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+try:
+    import imghdr
+except ModuleNotFoundError:
+    import imghdr3 as imghdr
 import os, json, time, re, traceback
 from threading import Thread
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode
