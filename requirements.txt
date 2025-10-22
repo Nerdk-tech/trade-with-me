@@ -11,3 +11,4 @@ pillow==11.3.0
 typing-extensions==4.15.0
 cryptography==46.0.2
 setuptools==80.9.0
+python-dotenv==1.0.1
