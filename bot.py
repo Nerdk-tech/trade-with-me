@@ -8,7 +8,7 @@ import os, json, time, re, traceback
 from threading import Thread
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 # optional libs
 try:
     import ccxt
@@ -250,7 +250,7 @@ def main():
     dp.add_handler(CommandHandler('start', start))
     dp.add_handler(CommandHandler('help', lambda u,c: u.message.reply_text('Use /start')))
     dp.add_handler(CallbackQueryHandler(button_cb))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, text_handler))
+    dp.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     t = Thread(target=limit_watcher, args=(updater,), daemon=True); t.start()
     updater.start_polling(); updater.idle()
 
