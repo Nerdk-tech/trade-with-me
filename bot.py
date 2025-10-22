@@ -6,7 +6,8 @@ if "imghdr" not in sys.modules:
 
 import os, json, time, re, traceback
 from threading import Thread
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ParseMode
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
 # optional libs
 try:
