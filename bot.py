@@ -197,7 +197,7 @@ def home():
     return "✅ Bot is alive and running!"
 
 # === Main Entry ===
-async def main():
+async def bot_main():
     tg_app = ApplicationBuilder().token(BOT_TOKEN).build()
     tg_app.add_handler(CommandHandler('start', start))
     tg_app.add_handler(CallbackQueryHandler(button_cb))
@@ -205,11 +205,25 @@ async def main():
 
     Thread(target=limit_watcher, args=(tg_app,), daemon=True).start()
 
-    loop = asyncio.get_event_loop()
-    flask_task = loop.run_in_executor(None, flask_app.run, "0.0.0.0", int(os.environ.get("PORT", 10000)))
-    telegram_task = tg_app.run_polling(stop_signals=None)
+    print("🤖 Telegram bot started... Listening for updates...")
+    await tg_app.run_polling(stop_signals=None)
 
-    await asyncio.gather(flask_task, telegram_task)
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    print(f"🌐 Flask server running on port {port}")
+    flask_app.run(host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Start Flask in background
+    Thread(target=run_flask, daemon=True).start()
+
+    # Run bot in main async loop
+    try:
+        asyncio.run(bot_main())
+    except RuntimeError as e:
+        if "already running" in str(e):
+            loop = asyncio.get_event_loop()
+            loop.create_task(bot_main())
+            loop.run_forever()
+        else:
+            raise
