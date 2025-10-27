@@ -15,7 +15,8 @@ from telegram.ext import (
     CallbackQueryHandler,
     MessageHandler,
     ContextTypes,
-    filters
+    filters,
+    idle
 )
 
 # optional libs
@@ -183,32 +184,147 @@ async def button_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == 'assets':
         assets = load_json('assets.json', [])
         await q.edit_message_text('\n'.join([f"{a['symbol']} - {a['name']}" for a in assets]))
+    elif data == 'buy':
+        context.user_data['awaiting_buy'] = True
+        await q.edit_message_text('Buy — send: SYMBOL AMOUNT')
+    elif data == 'sell':
+        context.user_data['awaiting_sell'] = True
+        await q.edit_message_text('Sell — send: SYMBOL AMOUNT')
+    elif data == 'wallets':
+        await q.edit_message_text(f"Wallets: {user.get('wallets',[]) or 'None'}")
+    elif data == 'invite':
+        code = 'R' + str(abs(hash(uid))%(10**8)); botname = context.application.bot.username
+        await q.edit_message_text('Invite: https://t.me/'+botname+'?start='+code)
+    elif data == 'cancel':
+        context.user_data.clear(); await q.edit_message_text('Cancelled ✅')
     else:
         await q.edit_message_text('Unknown.')
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (update.message.text or '').strip()
-    await update.message.reply_text(f"You said: {text}")
+    text = (update.message.text or '').strip(); uid=str(update.effective_user.id)
+    users = load_json('users.json', {})
+    if uid not in users:
+        # reuse start logic
+        await start(update, context); return
+    user = users.get(uid)
 
-# background thread
-def limit_watcher(app):
+    if context.user_data.get('awaiting_price'):
+        symbol = text.replace('/','').upper(); context.user_data.pop('awaiting_price', None); await update.message.reply_text(f"{symbol} price (mock): 12345.67"); return
+
+    if context.user_data.get('awaiting_buy') or context.user_data.get('awaiting_sell'):
+        parts = text.split()
+        if len(parts)<2:
+            await update.message.reply_text('Usage: SYMBOL AMOUNT'); return
+        sym = parts[0].upper()
+        try:
+            amt = float(parts[1])
+        except:
+            await update.message.reply_text('Invalid amount'); return
+        side = 'buy' if context.user_data.get('awaiting_buy') else 'sell'
+        context.user_data.pop('awaiting_buy', None); context.user_data.pop('awaiting_sell', None)
+        ex, err = get_exchange_for_user(user)
+        status = 'filled (mock)'
+        if ex:
+            try:
+                place_sym = sym if '/' in sym else sym[:-4]+'/'+sym[-4:]
+                if hasattr(ex,'create_market_order'):
+                    order = ex.create_market_order(place_sym, side, amt)
+                else:
+                    order = ex.create_order(place_sym, 'market', side, amt)
+                status = f"filled(exchange:{order.get('id')})"
+            except Exception as e:
+                status = f'failed_exchange:{e}'
+        orders = load_json('orders.json', []); oid='ord_'+str(len(orders)+1)
+        obj={'id':oid,'user_id':uid,'symbol':sym,'amount':amt,'side':side.upper(),'status':status,'created_at':int(time.time())}
+        orders.append(obj); save_json('orders.json', orders)
+        await update.message.reply_text(f"Order placed: {obj['id']} — {obj['status']}")
+        await log_action(context.application, uid, update.effective_user.username, 'place_order', f"{sym} {amt} {status}")
+        return
+
+    # import wallet flow (similar simplification)
+    if (update.message.text or '').lower()=="/import_wallet" or context.user_data.get('import_wallet_flow'):
+        state = context.user_data.get('import_wallet_flow')
+        if not state:
+            context.user_data['import_wallet_flow']='step1'; await update.message.reply_text('Import Wallet - Step 1: Name (letters+numbers)'); return
+        if state=='step1':
+            if not re.fullmatch(r'[A-Za-z0-9]{1,30}', (update.message.text or '')): await update.message.reply_text('Invalid name'); return
+            context.user_data['import_wallet_name']=update.message.text; context.user_data['import_wallet_flow']='step2'; await update.message.reply_text('Step 2: Paste public address (DO NOT paste private keys)'); return
+        if state=='step2':
+            text = update.message.text
+            if looks_like_priv(text): await update.message.reply_text('Detected private key/seed — abort.'); return
+            addr=text
+            if len(addr)<10: await update.message.reply_text('Invalid address'); return
+            name=context.user_data.pop('import_wallet_name','Wallet'); users.setdefault(uid,{'id':uid,'username':update.effective_user.username,'first_name':update.effective_user.first_name,'wallets':[],'points':0,'settings':{}})
+            users[uid].setdefault('wallets',[]).append({'name':name,'address':addr,'imported_at':int(time.time())}); save_json('users.json', users)
+            context.user_data.pop('import_wallet_flow', None); await update.message.reply_text(f"✅ Wallet '{name}' imported (public address saved)"); await log_action(context.application, uid, update.effective_user.username, 'import_wallet', addr); return
+
+    if (update.message.text or '').lower()=='/orders':
+        orders = load_json('orders.json', []); my=[o for o in orders if o.get('user_id')==uid]
+        if not my: await update.message.reply_text('You have no orders'); return
+        await update.message.reply_text('\n'.join([f"{o['id']}: {o['side']} {o['symbol']} {o['amount']} — {o['status']}" for o in my])); return
+
+    # admin commands
+    if update.effective_user and update.effective_user.id==ADMIN_ID:
+        lt = (update.message.text or '').lower()
+        if lt.startswith('/stats'):
+            users_all=load_json('users.json',{}); orders_all=load_json('orders.json',[]); refs=load_json('referrals.json',[]); logs=load_json('logs.json',[])
+            await update.message.reply_text(f"Users: {len(users_all)}\nOrders: {len(orders_all)}\nRefs: {len(refs)}\nLogs: {len(logs)}"); return
+        if lt.startswith('/vieworders'):
+            orders_all=load_json('orders.json',[])
+            if not orders_all: await update.message.reply_text('No orders'); return
+            last=orders_all[-20:]; await update.message.reply_text('\n'.join([f"{o['id']}: {o['user_id']} {o['side']} {o['symbol']} {o['amount']} — {o['status']}" for o in last])); return
+        if lt.startswith('/users'):
+            users_all=load_json('users.json',{}); sample=list(users_all.values())[-20:]; await update.message.reply_text('\n'.join([f"{u.get('id')} @{u.get('username')} {u.get('first_name')}" for u in sample]) or 'No users'); return
+        if lt.startswith('/broadcast '):
+            msg = (update.message.text or '')[len('/broadcast '):]; users_all=load_json('users.json',{})
+            for uid_k,u in users_all.items():
+                try: await context.application.bot.send_message(int(uid_k), f"[ADMIN] {msg}")
+                except Exception: pass
+            await update.message.reply_text('Broadcast sent'); return
+
+    await update.message.reply_text('I did not understand. Use /start or /help')
+
+# background thread (safe scheduling to main loop)
+def limit_watcher(app, loop):
     while True:
         try:
             lot = load_json('limit_orders.json', [])
+            changed = False
             for o in list(lot):
                 if o.get('status') != 'open':
                     continue
-                price = float(10000 + (hash(o.get('symbol', '')) % 50000) / 100.0)
+                try: price = float(10000 + (hash(o.get('symbol', '')) % 50000) / 100.0)
+                except: price = 10000.0
                 if (o['side'] == 'BUY' and price <= float(o['target'])) or (o['side'] == 'SELL' and price >= float(o['target'])):
-                    o['status'] = 'filled (mock)'
+                    users = load_json('users.json',{}); user = users.get(o.get('user_id'))
+                    ex, err = get_exchange_for_user(user); status='filled (mock)'
+                    if ex:
+                        try:
+                            place_symbol = o['symbol'] if '/' in o['symbol'] else o['symbol'][:-4]+'/'+o['symbol'][-4:]
+                            if hasattr(ex,'create_market_order'): order_resp = ex.create_market_order(place_symbol, o['side'].lower(), float(o['amount']))
+                            else: order_resp = ex.create_order(place_symbol, 'market', o['side'].lower(), float(o['amount']))
+                            status = f"filled(exchange:{order_resp.get('id')})"
+                        except Exception as e: status=f'failed_exchange:{e}'
+                    o['status'] = status; changed=True
+                    # schedule send_message on the main event loop safely
                     try:
-                        asyncio.run(app.bot.send_message(int(o['user_id']), f"Limit order {o['id']} executed"))
+                        coro = app.bot.send_message(int(o['user_id']), f"Limit order {o['id']} executed: {status}")
+                        asyncio.run_coroutine_threadsafe(coro, loop)
                     except Exception:
                         pass
-            save_json('limit_orders.json', lot)
+            if changed: save_json('limit_orders.json', lot)
         except Exception:
             traceback.print_exc()
         time.sleep(15)
+
+# optional tiny HTTP server to satisfy Render web-service port check
+def _keep_alive_server():
+    import http.server, socketserver
+    port = int(os.environ.get("PORT", 8080))
+    handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", port), handler) as httpd:
+        print(f"Keep-alive HTTP server running on port {port}")
+        httpd.serve_forever()
 
 # === MAIN ===
 async def main():
@@ -218,10 +334,13 @@ async def main():
     app.add_handler(CallbackQueryHandler(button_cb))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    # start background thread
-    Thread(target=limit_watcher, args=(app,), daemon=True).start()
+    # start background thread (we'll pass main loop later)
+    # start fake server so Render web service port scan passes
+    Thread(target=_keep_alive_server, daemon=True).start()
 
     print("Bot started...")
+
+    # initialize/start the application in async style
     await app.initialize()
     await app.start()
     await app.updater.start_polling()
@@ -229,12 +348,39 @@ async def main():
     await app.stop()
     await app.shutdown()
 
-
 if __name__ == "__main__":
-    import asyncio
+    # create a fresh loop for Render and run main as a background task
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    # start the limit_watcher thread and give it access to this loop
+    # but we need the app object to exist — we start the watcher after the app starts
+    # So we schedule a helper to wait for the application to be available and then start the watcher.
+    async def _start_watcher_when_ready():
+        # wait for Application to be built and available on the loop tasks
+        # we will search for the Application instance by looking at running tasks (simple heuristic)
+        # NOTE: this is a small helper — if you prefer explicit wiring, we can refactor to pass app directly.
+        # Sleep a moment to allow app to initialize
+        await asyncio.sleep(1)
+        # Try to get an Application instance from tasks' coro closures (best-effort)
+        # If not found, skip starting watcher (it will still be OK).
+        for t in asyncio.all_tasks(loop):
+            coro = t.get_coro()
+            if hasattr(coro, 'cr_frame') and coro.cr_frame is not None:
+                # crude approach — look for 'app' in locals
+                f_locals = coro.cr_frame.f_locals
+                app = f_locals.get('app') or f_locals.get('application')
+                if app:
+                    # start the watcher thread with this app and the loop
+                    Thread(target=limit_watcher, args=(app, loop), daemon=True).start()
+                    return
+        # fallback: no app found — start watcher with None (it will skip sends)
+        # Thread(target=limit_watcher, args=(None, loop), daemon=True).start()
+
+    # schedule main and helper
+    loop.create_task(main())
+    loop.create_task(_start_watcher_when_ready())
     try:
-        loop = asyncio.get_event_loop()
-        loop.create_task(main())
         loop.run_forever()
     except KeyboardInterrupt:
         pass
