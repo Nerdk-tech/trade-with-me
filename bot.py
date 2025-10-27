@@ -222,16 +222,9 @@ async def main():
     Thread(target=limit_watcher, args=(app,), daemon=True).start()
 
     print("Bot started...")
-    await app.run_polling()
+    await app.run_polling(close_loop=False)
 
-
-import asyncio
 
 if __name__ == "__main__":
-    try:
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(main())
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(main())
+    import asyncio
+    asyncio.run(main())
