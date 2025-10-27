@@ -269,17 +269,17 @@ def home():
     return "✅ Bot is running."
 
 async def bot_main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    tg_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler('start', start))
-    app.add_handler(CallbackQueryHandler(button_cb))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    tg_app.add_handler(CommandHandler('start', start))
+    tg_app.add_handler(CallbackQueryHandler(button_cb))
+    tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    # start background thread
-    Thread(target=limit_watcher, args=(app,), daemon=True).start()
+    # background limit watcher
+    Thread(target=limit_watcher, args=(tg_app,), daemon=True).start()
 
     print("Bot started...")
-    await app.run_polling()
+    await tg_app.run_polling(stop_signals=None)  # ✅ important fix
 
 def run_flask():
     app_web.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
