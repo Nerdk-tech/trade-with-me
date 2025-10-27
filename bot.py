@@ -217,13 +217,21 @@ if __name__ == "__main__":
     # Start Flask in background
     Thread(target=run_flask, daemon=True).start()
 
-    # Run bot in main async loop
+    # Safe async start (no event loop conflict)
+    import asyncio
+
     try:
-        asyncio.run(bot_main())
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    try:
+        loop.run_until_complete(bot_main())
     except RuntimeError as e:
         if "already running" in str(e):
-            loop = asyncio.get_event_loop()
-            loop.create_task(bot_main())
+            print("🔁 Reusing existing event loop...")
+            asyncio.ensure_future(bot_main())
             loop.run_forever()
         else:
             raise
