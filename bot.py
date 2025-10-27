@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import types, sys, os, json, time, re, traceback, asyncio
-from threading import Thread
 from dotenv import load_dotenv
+from threading import Thread
+from flask import Flask
 
 # Fix for Python 3.13 removing imghdr
 if "imghdr" not in sys.modules:
@@ -43,11 +44,9 @@ ADMIN_PASS = os.getenv("ADMIN_PASS", "blazeddddd")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN required")
 
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
 
-def data_path(p):
-    return os.path.join(DATA_DIR, p)
+def data_path(p): return os.path.join(DATA_DIR, p)
 
 def load_json(name, default):
     try:
@@ -72,33 +71,24 @@ defaults = {
     ],
     "logs.json": [],
 }
-
 for k, v in defaults.items():
     if not os.path.exists(data_path(k)):
         save_json(k, v)
 
-# fernet safe
+# fernet setup
 FERNET = None
-if FERNET_KEY and Fernet is not None:
+if FERNET_KEY and Fernet:
     try:
         FERNET = Fernet(FERNET_KEY.encode())
         print("[INFO] Fernet loaded: encryption enabled")
     except Exception as e:
-        FERNET = None
-        print("[WARN] Invalid FERNET_KEY — encryption disabled:", e)
-else:
-    print("[INFO] No FERNET_KEY — running without encryption")
+        print("[WARN] Invalid FERNET_KEY:", e)
 
-def encrypt_secret(s):
-    return s if not FERNET else FERNET.encrypt(s.encode()).decode()
-
+def encrypt_secret(s): return s if not FERNET else FERNET.encrypt(s.encode()).decode()
 def decrypt_secret(s):
-    if not FERNET:
-        return s
-    try:
-        return FERNET.decrypt(s.encode()).decode()
-    except Exception:
-        return s
+    if not FERNET: return s
+    try: return FERNET.decrypt(s.encode()).decode()
+    except Exception: return s
 
 _priv = [
     re.compile(r"\b(private key|mnemonic|seed)\b", re.I),
@@ -107,56 +97,34 @@ _priv = [
 
 def looks_like_priv(text):
     for p in _priv:
-        if p.search(text):
-            return True
+        if p.search(text): return True
     words = [w for w in re.split(r"\s+", text) if w]
     return 10 <= len(words) <= 24
 
 def walletconnect_url():
     pid = WALLETCONNECT_PROJECT_ID
-    return (
-        f"https://walletconnect.com/connect?projectId={pid}"
-        if pid
-        else "https://walletconnect.com/"
-    )
+    return f"https://walletconnect.com/connect?projectId={pid}" if pid else "https://walletconnect.com/"
 
-# logging
 async def log_action(app, uid, uname, action, details=""):
     logs = load_json("logs.json", [])
-    logs.append(
-        {
-            "ts": int(time.time()),
-            "user_id": uid,
-            "username": uname,
-            "action": action,
-            "details": details,
-        }
-    )
+    logs.append({"ts": int(time.time()), "user_id": uid, "username": uname, "action": action, "details": details})
     save_json("logs.json", logs)
     try:
         if int(uid) != int(ADMIN_ID):
-            await app.bot.send_message(
-                int(ADMIN_ID), f"[LOG] {uname or uid} — {action} — {details}"
-            )
+            await app.bot.send_message(int(ADMIN_ID), f"[LOG] {uname or uid} — {action} — {details}")
     except Exception:
         pass
 
-# ccxt exchange helper
+# ccxt helper
 def get_exchange_for_user(user):
-    if not ccxt:
-        return None, "ccxt not installed"
-    if not user:
-        return None, "no user"
+    if not ccxt: return None, "ccxt not installed"
+    if not user: return None, "no user"
     exid = user.get("exchange_id")
-    k = user.get("exchange_key")
-    s = user.get("exchange_secret")
-    if not exid or not k or not s:
-        return None, "not configured"
+    k, s = user.get("exchange_key"), user.get("exchange_secret")
+    if not exid or not k or not s: return None, "not configured"
     try:
-        api_key = decrypt_secret(k)
-        api_secret = decrypt_secret(s)
         excls = getattr(ccxt, exid)
-        ex = excls({"apiKey": api_key, "secret": api_secret, "enableRateLimit": True})
+        ex = excls({"apiKey": decrypt_secret(k), "secret": decrypt_secret(s), "enableRateLimit": True})
         return ex, None
     except Exception as e:
         return None, str(e)
@@ -167,63 +135,34 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(u.id)
     users = load_json("users.json", {})
     if uid not in users:
-        users[uid] = {
-            "id": uid,
-            "username": u.username,
-            "first_name": u.first_name,
-            "wallets": [],
-            "points": 0,
-            "settings": {},
-        }
+        users[uid] = {"id": uid, "username": u.username, "first_name": u.first_name, "wallets": [], "points": 0, "settings": {}}
         save_json("users.json", users)
 
     kb = [
         [InlineKeyboardButton("🔗 Connect Wallet", callback_data="connect")],
-        [
-            InlineKeyboardButton("📈 Price", callback_data="price"),
-            InlineKeyboardButton("📊 Assets", callback_data="assets"),
-        ],
-        [
-            InlineKeyboardButton("🛒 Buy", callback_data="buy"),
-            InlineKeyboardButton("💱 Sell", callback_data="sell"),
-        ],
-        [
-            InlineKeyboardButton("👛 Wallets", callback_data="wallets"),
-            InlineKeyboardButton("🔗 Invite", callback_data="invite"),
-        ],
+        [InlineKeyboardButton("📈 Price", callback_data="price"), InlineKeyboardButton("📊 Assets", callback_data="assets")],
+        [InlineKeyboardButton("🛒 Buy", callback_data="buy"), InlineKeyboardButton("💱 Sell", callback_data="sell")],
+        [InlineKeyboardButton("👛 Wallets", callback_data="wallets"), InlineKeyboardButton("🔗 Invite", callback_data="invite")],
         [InlineKeyboardButton("❓ Help", callback_data="help")],
     ]
-    await update.message.reply_text(
-        "Welcome to Trade With Me", reply_markup=InlineKeyboardMarkup(kb)
-    )
+    await update.message.reply_text("Welcome to Trade With Me", reply_markup=InlineKeyboardMarkup(kb))
     await log_action(context.application, uid, u.username, "start")
 
 async def button_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     data = q.data
     uid = str(q.from_user.id)
-    users = load_json("users.json", {})
-    user = users.get(uid, {})
 
     if data == "connect":
         url = walletconnect_url()
-        kb = [
-            [InlineKeyboardButton("🌐 WalletConnect", url=url)],
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
-        ]
-        await q.edit_message_text(
-            "Open your wallet app (it will ask permission).",
-            reply_markup=InlineKeyboardMarkup(kb),
-        )
+        kb = [[InlineKeyboardButton("🌐 WalletConnect", url=url)], [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]]
+        await q.edit_message_text("Open your wallet app (it will ask permission).", reply_markup=InlineKeyboardMarkup(kb))
         await log_action(context.application, uid, q.from_user.username, "open_connect")
     elif data == "price":
-        context.user_data["awaiting_price"] = True
         await q.edit_message_text("Send symbol (e.g. BTC/USDT).")
     elif data == "assets":
         assets = load_json("assets.json", [])
-        await q.edit_message_text(
-            "\n".join([f"{a['symbol']} - {a['name']}" for a in assets])
-        )
+        await q.edit_message_text("\n".join([f"{a['symbol']} - {a['name']}" for a in assets]))
     else:
         await q.edit_message_text("Unknown.")
 
@@ -231,26 +170,18 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (update.message.text or "").strip()
     await update.message.reply_text(f"You said: {text}")
 
-# background thread
+# === Background Worker ===
 def limit_watcher(app):
     while True:
         try:
             lot = load_json("limit_orders.json", [])
-            for o in list(lot):
-                if o.get("status") != "open":
-                    continue
+            for o in lot:
+                if o.get("status") != "open": continue
                 price = float(10000 + (hash(o.get("symbol", "")) % 50000) / 100.0)
-                if (o["side"] == "BUY" and price <= float(o["target"])) or (
-                    o["side"] == "SELL" and price >= float(o["target"])
-                ):
+                if (o["side"] == "BUY" and price <= float(o["target"])) or (o["side"] == "SELL" and price >= float(o["target"])):
                     o["status"] = "filled (mock)"
                     try:
-                        asyncio.run(
-                            app.bot.send_message(
-                                int(o["user_id"]),
-                                f"Limit order {o['id']} executed",
-                            )
-                        )
+                        asyncio.run(app.bot.send_message(int(o["user_id"]), f"Limit order {o['id']} executed"))
                     except Exception:
                         pass
             save_json("limit_orders.json", lot)
@@ -258,32 +189,27 @@ def limit_watcher(app):
             traceback.print_exc()
         time.sleep(15)
 
-# === MAIN ===
-from flask import Flask
-import threading
+# === Flask ===
+flask_app = Flask(__name__)
 
-app_web = Flask(__name__)
-
-@app_web.route('/')
+@flask_app.route('/')
 def home():
-    return "✅ Bot is running."
+    return "✅ Bot is alive and running!"
 
-async def bot_main():
+# === Main Entry ===
+async def main():
     tg_app = ApplicationBuilder().token(BOT_TOKEN).build()
-
     tg_app.add_handler(CommandHandler('start', start))
     tg_app.add_handler(CallbackQueryHandler(button_cb))
     tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    # background limit watcher
     Thread(target=limit_watcher, args=(tg_app,), daemon=True).start()
 
-    print("Bot started...")
-    await tg_app.run_polling(stop_signals=None)  # ✅ important fix
+    loop = asyncio.get_event_loop()
+    flask_task = loop.run_in_executor(None, flask_app.run, "0.0.0.0", int(os.environ.get("PORT", 10000)))
+    telegram_task = tg_app.run_polling(stop_signals=None)
 
-def run_flask():
-    app_web.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    await asyncio.gather(flask_task, telegram_task)
 
 if __name__ == "__main__":
-    threading.Thread(target=lambda: asyncio.run(bot_main()), daemon=True).start()
-    run_flask()
+    asyncio.run(main())
