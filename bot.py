@@ -259,28 +259,31 @@ def limit_watcher(app):
         time.sleep(15)
 
 # === MAIN ===
-async def main():
+from flask import Flask
+import threading
+
+app_web = Flask(__name__)
+
+@app_web.route('/')
+def home():
+    return "✅ Bot is running."
+
+async def bot_main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
+
+    app.add_handler(CommandHandler('start', start))
     app.add_handler(CallbackQueryHandler(button_cb))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
+    # start background thread
     Thread(target=limit_watcher, args=(app,), daemon=True).start()
-    print("Bot started...")
 
-    await app.initialize()
-    await app.start()
-    print("Polling started...")
-    await app.updater.start_polling()
-    await asyncio.Event().wait()
+    print("Bot started...")
+    await app.run_polling()
+
+def run_flask():
+    app_web.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except RuntimeError as e:
-        if "already running" in str(e):
-            loop = asyncio.get_event_loop()
-            loop.create_task(main())
-            loop.run_forever()
-        else:
-            raise
+    threading.Thread(target=lambda: asyncio.run(bot_main()), daemon=True).start()
+    run_flask()
